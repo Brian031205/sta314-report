@@ -29,6 +29,7 @@ train_data <- na.omit(train_data)  # Drop rows with any missing values
 
 
 # Combine point-biserial correlation threshold and p-value testing
+numeric_features <- train_data %>% select_if(is.numeric)
 numeric_results <- lapply(numeric_features, function(x) {
   test <- cor.test(x, as.numeric(train_data$Diagnosis) - 1)  # Convert Diagnosis to numeric (0/1)
   list(correlation = test$estimate, p_value = test$p.value)
