@@ -1,0 +1,282 @@
+---
+title: "Untitled"
+author: "Edward Hong"
+date: "2024-12-04"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(dplyr)
+library(ggplot2)
+```
+
+```{r}
+train_data <- read.csv('train.csv')
+test_data <- read.csv('test.csv')
+```
+
+```{r}
+summary(train_data)
+```
+
+```{r}
+summary(test_data)
+```
+
+
+```{r}
+ggplot(train_data, aes(x = Age, fill = factor(Diagnosis))) +
+  geom_histogram(binwidth = 2) +
+  facet_wrap(~ Diagnosis) +
+  scale_fill_manual(values = c("blue", "orange"))
+  labs(title = "Age Distribution by Alzheimer's Diagnosis", 
+       x = "Age", 
+       fill = "Diagnosis") +
+  theme_minimal()
+```
+
+```{r}
+ggplot(train_data, aes(x = Gender, fill = as.factor(Diagnosis))) +
+  geom_bar(position = "dodge") +
+  scale_fill_manual(values = c("darkgreen", "red"))
+  labs(title = "Gender Breakdown by Diagnosis",
+       x = "Gender",
+       y = "Count",
+       fill = "Diagnosis") +
+  theme_minimal()
+```
+
+```{r}
+ggplot(train_data, aes(x = Ethnicity, fill = as.factor(Diagnosis))) +
+  geom_bar(position = "dodge") +
+  scale_fill_manual(values = c("navy", "orange"))
+  labs(title = "Ethnicity Breakdown by Diagnosis",
+       x = "Ethnicity",
+       y = "Count",
+       fill = "Diagnosis") +
+  theme_minimal()
+
+```
+
+```{r}
+ggplot(train_data, aes(x = MMSE, fill = factor(Diagnosis))) +
+  geom_histogram(binwidth = 2) +  
+  facet_wrap(~ Diagnosis) +
+  scale_fill_manual(values = c("purple", "green")) + 
+  labs(title = "MMSE Distribution by Alzheimer's Diagnosis", 
+       x = "MMSE", 
+       fill = "Diagnosis") +
+  theme_minimal()
+```
+
+```{r}
+library(GGally)
+
+selected_variables <- train_data %>%
+  select(Age, MMSE, BMI, SleepQuality, PhysicalActivity, Diagnosis)
+
+ggpairs(selected_variables, aes(color = as.factor(Diagnosis), alpha = 0.5)) +
+  labs(title = "Pair Plot for Selected Variables")
+
+```
+
+
+```{r}
+library(naniar)
+
+vis_miss(train_data) +
+  labs(title = "Missing Data Visualization")
+```
+
+```{r}
+library(gridExtra)
+
+p1 <- ggplot(train_data, aes(x = "", y = PhysicalActivity)) +
+  geom_boxplot(fill = "skyblue", outlier.color = "red") +
+  labs(title = "PhysicalActivity", y = "Value", x = "") +
+  theme_minimal()
+
+p2 <- ggplot(train_data, aes(x = "", y = BMI)) +
+  geom_boxplot(fill = "lightgreen", outlier.color = "red") +
+  labs(title = "BMI", y = "Value", x = "") +
+  theme_minimal()
+
+p3 <- ggplot(train_data, aes(x = "", y = MMSE)) +
+  geom_boxplot(fill = "lightpink", outlier.color = "red") +
+  labs(title = "MMSE", y = "Value", x = "") +
+  theme_minimal()
+
+p4 <- ggplot(train_data, aes(x = "", y = AlcoholConsumption)) +
+  geom_boxplot(fill = "gold", outlier.color = "red") +
+  labs(title = "Alcohol Consumption", y = "Value", x = "") +
+  theme_minimal()
+
+# Combine all boxplots into a single chart
+grid.arrange(p1, p2, p3, p4, nrow = 2, top = "Boxplots for Outlier Detection")
+
+```
+
+```{r}
+# Remove irrelevant columns
+train_data <- train_data %>% select(-PatientID, -DoctorInCharge)  # Remove columns unlikely to provide predictive value
+
+# Confirm Diagnosis is binary and convert to a factor if needed
+if (length(unique(train_data$Diagnosis)) == 2) {
+  train_data$Diagnosis <- as.factor(train_data$Diagnosis)
+} else {
+  stop("Diagnosis must be a binary variable.")
+}
+
+# Ensure categorical variables are factors
+train_data$Gender <- as.factor(train_data$Gender)
+train_data$Ethnicity <- as.factor(train_data$Ethnicity)
+train_data$EducationLevel <- as.factor(train_data$EducationLevel)
+```
+
+```{r}
+# Combine point-biserial correlation threshold and p-value testing
+numeric_features <- train_data %>% select_if(is.numeric)
+numeric_results <- lapply(numeric_features, function(x) {
+  test <- cor.test(x, as.numeric(train_data$Diagnosis) - 1)  # Convert Diagnosis to numeric (0/1)
+  list(correlation = test$estimate, p_value = test$p.value)
+})
+
+# Convert results to a data frame for filtering
+numeric_df <- data.frame(
+  Feature = names(numeric_results),
+  Correlation = sapply(numeric_results, function(res) res$correlation),
+  P_Value = sapply(numeric_results, function(res) res$p_value)
+)
+
+# Filter features based on correlation threshold and p-value
+correlation_threshold <- 0.03
+numeric_significant <- numeric_df %>%
+  filter(abs(Correlation) > correlation_threshold & P_Value < 0.05) %>%
+  pull(Feature)
+
+# Print significant numeric features
+print("Significant Numeric Features:")
+print(numeric_significant)
+```
+
+```{r}
+# Combine selected numeric features and Diagnosis column
+all_selected_features <- c(numeric_significant, "Diagnosis")
+
+# Subset the dataset with the selected features
+selected_data <- train_data %>%
+  dplyr::select(all_of(all_selected_features))
+
+# Display the first few rows of the selected dataset
+head(selected_data)
+```
+
+```{r}
+library(caret)
+library(xgboost)
+set.seed(787)
+trainIndex <- createDataPartition(selected_data$Diagnosis, p = 0.8, list = FALSE)
+training_set <- selected_data[trainIndex, ]
+validation_set <- selected_data[-trainIndex, ]
+# Ensure Diagnosis is numeric
+training_set$Diagnosis <- as.numeric(as.character(training_set$Diagnosis))
+validation_set$Diagnosis <- as.numeric(as.character(validation_set$Diagnosis))
+# Create training matrix for XGBoost
+train_matrix <- xgb.DMatrix(data = as.matrix(training_set %>% dplyr::
+                                               select(-Diagnosis)),
+                            label = training_set$Diagnosis)
+```
+
+```{r}
+param_grid <- expand.grid(eta = c(0.01, 0.05), max_depth = c(4, 6), 
+                          subsample = c(0.8, 1.0),
+                          colsample_bytree = c(0.8, 1.0))
+best_params <- NULL
+lowest_logloss <- Inf
+```
+
+```{r}
+for (i in 1:nrow(param_grid)) {
+  params <- list(
+    objective = "binary:logistic",
+    eval_metric = "logloss",
+    eta = param_grid$eta[i],
+    max_depth = param_grid$max_depth[i],
+    subsample = param_grid$subsample[i],
+    colsample_bytree = param_grid$colsample_bytree[i]
+  )
+  
+  set.seed(787)
+  cv_results <- xgb.cv(
+    params = params,
+    data = train_matrix,
+    nrounds = 100,
+    nfold = 10,
+    early_stopping_rounds = 10,
+    verbose = 0
+  )
+  
+  min_logloss <- min(cv_results$evaluation_log$test_logloss_mean)
+  
+  if (min_logloss < lowest_logloss) {lowest_logloss <- min_logloss
+    best_params <- params
+    best_nrounds <- cv_results$best_iteration
+  }
+}
+print(best_params)
+print(paste("Best Number of Rounds:", best_nrounds))
+```
+
+```{r}
+final_model <- xgb.train(params = best_params, data = train_matrix, 
+                         nrounds = best_nrounds)
+```
+
+```{r}
+valid_matrix <- xgb.DMatrix(data = as.matrix(validation_set %>% dplyr::
+                                               select(-Diagnosis)))
+final_preds <- predict(final_model, valid_matrix)
+final_class <- ifelse(final_preds > 0.5, 1, 0)
+confusionMatrix(factor(final_class), factor(validation_set$Diagnosis))
+```
+
+```{r}
+valid_preds_prob <- predict(final_model, valid_matrix)
+thresholds <- seq(0.05, 0.95, by = 0.05)
+best_threshold <- 0
+best_f1 <- 0
+for (thresh in thresholds) {
+valid_preds_class <- ifelse(valid_preds_prob > thresh, 1, 0)
+cm <- confusionMatrix(factor(valid_preds_class),factor(validation_set$Diagnosis))
+precision <- cm$byClass["Pos Pred Value"]
+recall <- cm$byClass["Sensitivity"]
+f1 <- 2 * (precision * recall) / (precision + recall)
+if (!is.na(f1) && f1 > best_f1) {
+best_f1 <- f1
+best_threshold <- thresh
+}
+}
+print(paste("Best Threshold:", best_threshold))
+print(paste("Best F1-Score:", best_f1))
+```
+
+
+```{r}
+selected_features_test <- all_selected_features[all_selected_features != 
+                                                  "Diagnosis"]
+test_matrix <- xgb.DMatrix(data = as.matrix(test_data %>% dplyr::
+                                              select(all_of(selected_features_test))))
+test_preds <- predict(final_model, test_matrix)
+test_class <- ifelse(test_preds > best_threshold, 1, 0)
+submission <- data.frame(PatientID = test_data$PatientID, Diagnosis = test_class)
+write.csv(submission, "prediction.csv", row.names = FALSE)
+```
+
+
+
+
+
