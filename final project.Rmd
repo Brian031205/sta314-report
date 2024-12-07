@@ -131,10 +131,6 @@ if (length(unique(train_data$Diagnosis)) == 2) {
   stop("Diagnosis must be a binary variable.")
 }
 
-# Ensure categorical variables are factors
-train_data$Gender <- as.factor(train_data$Gender)
-train_data$Ethnicity <- as.factor(train_data$Ethnicity)
-train_data$EducationLevel <- as.factor(train_data$EducationLevel)
 ```
 
 ```{r}
